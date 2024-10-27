@@ -138,7 +138,7 @@ public:
         while (true)
         {
             auto n = OnLoop(*this);
-            if (n < -1) // stop server
+            if (n < 1) // stop server
             {
                 break;
             }
@@ -196,9 +196,8 @@ public:
                         }
                         else
                         {
-                            // 服务器已满载 TODO log
                             close(client_sock);
-                            printf("poll server error, server max full \n");
+                            OnOpen(*this, -1);
                         }
                     }
                     else if (item.revents != 0)
