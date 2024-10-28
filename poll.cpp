@@ -96,7 +96,7 @@ private:
         flags |= O_NONBLOCK;
         if (fcntl(sockfd, F_SETFL, flags) == -1)
         {
-            return -1;
+            return -2;
         }
         return 0;
     }
@@ -142,7 +142,6 @@ public:
             {
                 break;
             }
-
             // 重新组织 pollfd 数组, TODO 此处有性能开销因此连接数也不应过大
             std::vector<pollfd> pollfds;
             pollfds.reserve(connections.size()); // 预分配足够的容量
@@ -150,7 +149,6 @@ public:
             {
                 pollfds.emplace_back(c.second.info);
             }
-
             int num_fds = poll(pollfds.data(), pollfds.size(), n);
             // 返回值，正整数：就绪的文件描述符数量，0: 超时，-1: 错误，第三个参数配置的是超时时间
             printf("poll got %d ready\n", num_fds);
@@ -168,7 +166,7 @@ public:
                 throw Exception(strerror(errno));
             }
 
-            for (auto &item : pollfds)
+            for (const auto &item : pollfds)
             {
                 // 检查服务器套接字是否有新连接
                 if (item.fd == server_sock)
@@ -206,7 +204,7 @@ public:
                     }
                     // else 没有事件
 
-                    // i==0 是服务器监听的socket，上面是处理逻辑，只需要处理POLLIN事件，处理完毕在此直接跳到下个循环
+                    // 服务器监听的socket，上面是处理逻辑，只需要处理POLLIN事件，处理完毕在此直接跳到下个循环
                     continue;
                 }
 
