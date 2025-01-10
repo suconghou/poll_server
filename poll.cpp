@@ -42,7 +42,8 @@ class poll_server
     struct WriteRequest
     {
         std::string data;                               // 要写入的数据
-        std::function<void(self &, int, int)> callback; // 回调函数,参数2:fd，参数3:发送的字节数，负数则为失败
+        std::function<void(self &, int, int)> callback; // 回调函数,参数2:fd，参数3:发送的字节数，负数则为失败，是0表示对方已关闭了链接
+        int out_bytes;                                  // 数据发送计数器，分片发送时，最后一次成功回调需要
     };
 
     struct connection
@@ -109,14 +110,23 @@ public:
     {
     }
     // 返回值，已经入队的数量，当入队数量过多时，调用者需放缓以防止内存耗尽
+    // 如果传入的fd不对，将抛出异常
+    // 如果要发送的数据0字节，忽略发送请求
     int write(int fd, const char *data, int len, std::function<void(self &, int, int)> cb)
     {
         return write(fd, std::string(data, len), cb);
     }
+    // 返回值，已经入队的数量，当入队数量过多时，调用者需放缓以防止内存耗尽
+    // 如果传入的fd不对，将抛出异常
+    // 如果要发送的数据0字节，忽略发送请求
     int write(int fd, std::string data, std::function<void(self &, int, int)> cb)
     {
         auto &c = connections.at(fd); // 如果传入的fd不对，此处抛出异常
-        c.out.push({data, cb});
+        if (data.size() <= 0)
+        {
+            return c.out.size();
+        }
+        c.out.push({data, cb, 0});
         c.info.events |= POLLOUT;
         return c.out.size();
     }
@@ -134,17 +144,18 @@ public:
 
         struct sockaddr_in client_name;
         socklen_t client_name_len = sizeof(client_name);
-        char buf[512]; // recv buffer,全局复用; TODO enlarge
+        char buf[512];               // recv buffer,全局复用; TODO enlarge max = 8192
+        std::vector<pollfd> pollfds; // 重新组织 pollfd 数组时使用的缓存，我们存放在上层服复用
         while (true)
         {
             auto n = OnLoop(*this);
-            if (n < 1) // stop server
+            if (n < 1) // OnLoop返回小于1代表意图停止服务
             {
                 break;
             }
-            // 重新组织 pollfd 数组, TODO 此处有性能开销因此连接数也不应过大
-            std::vector<pollfd> pollfds;
+            // 重新组织 pollfd 数组, 此处有性能开销因此连接数也不应过大，即backlog变量一般应小于1024
             pollfds.reserve(connections.size()); // 预分配足够的容量
+            pollfds.clear();
             for (const auto &c : connections)
             {
                 pollfds.emplace_back(c.second.info);
@@ -237,7 +248,7 @@ public:
                 }
                 else if (item.revents & POLLOUT)
                 {
-                    auto &c = connections.at(item.fd); // 此处必然存在
+                    auto &c = connections.at(item.fd); // 此处需要必然存在
                     auto &q = c.out;
                     if (!q.empty())
                     {
@@ -255,17 +266,19 @@ public:
                         else if (bytesSent > 0 || bytesSent == r.data.size()) // >=0 (可能r.data.size()==0)
                         {
                             // 部分数据发送成功，可能需要稍后再试
+                            r.out_bytes += bytesSent;
                             r.data.erase(0, bytesSent);
                             if (r.data.empty())
                             {
                                 q.pop(); // 发送完成，移除请求
                                 if (r.callback)
                                 {
-                                    r.callback(*this, item.fd, bytesSent);
+                                    r.callback(*this, item.fd, r.out_bytes);
                                 }
                             }
                             else
                             {
+                                // 要发送的数据太大，数据分片了
                                 printf("not empty\n");
                             }
                         }
@@ -284,7 +297,7 @@ public:
                 }
                 else if (item.revents & POLLHUP)
                 {
-                    // 对方关闭连接,使用-1标记是POLLHUP触发了
+                    // 对方关闭连接,使用-1标记是POLLHUP事件触发了
                     close(item.fd);
                     connections.erase(item.fd);
                     OnData(*this, item.fd, nullptr, -1);
