@@ -188,7 +188,7 @@ public:
                         int client_sock = accept(server_sock, (struct sockaddr *)&client_name, &client_name_len);
                         if (client_sock < 1)
                         {
-                            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
                             {
                                 continue;
                             }
@@ -230,7 +230,7 @@ public:
                     }
                     if (ret == 0)
                     {
-                        // recv返回值0 代表 对方关闭连接
+                        // recv返回值0 代表 连接已被对端关闭
                         close(item.fd);
                         connections.erase(item.fd);
                         OnData(*this, item.fd, buf, ret);
@@ -238,12 +238,22 @@ public:
                     else if (ret == -1)
                     {
                         // 判断错误类型
-                        if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
                         {
                             // 没有数据可读，继续等待
                             continue;
                         }
-                        throw Exception(strerror(errno));
+                        else if (errno == ECONNRESET)
+                        {
+                            close(item.fd);
+                            connections.erase(item.fd);
+                            OnData(*this, item.fd, buf, -2);
+                        }
+                        else
+                        {
+                            printf("error %s %d \n", strerror(errno), errno);
+                            throw Exception(strerror(errno));
+                        }
                     }
                 }
                 else if (item.revents & POLLOUT)

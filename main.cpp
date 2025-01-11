@@ -4,7 +4,7 @@ int main()
 {
     auto on_loop = [](poll_server &a)
     {
-        return 5000;
+        return 15000;
     };
 
     auto on_open = [&](poll_server &a, int fd)
@@ -24,7 +24,7 @@ int main()
             printf("client %d closed %d \n", fd, n);
             return;
         }
-        printf("Received %d data from client: %s\n", n, buf);
+        printf("Received %d data from client %d: %s\n", n, fd, buf);
         a.write(fd, buf, n, nullptr);
     };
     poll_server a(on_loop, on_open, on_data);
