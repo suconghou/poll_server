@@ -2,7 +2,7 @@
 
 int main()
 {
-    auto on_loop = [](poll_server &a)
+    auto on_loop = [](poll_server &a, int n)
     {
         return 15000;
     };

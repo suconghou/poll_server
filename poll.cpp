@@ -104,9 +104,9 @@ private:
 
 public:
     poll_server(std::function<int(self &, int)> on_loop, std::function<void(self &, int)> on_open, std::function<void(self &, int, const char *, int)> on_data)
-        : OnLoop(std::ref(on_loop)),
-          OnOpen(std::ref(on_open)),
-          OnData(std::ref(on_data))
+        : OnLoop(on_loop),
+          OnOpen(on_open),
+          OnData(on_data)
     {
     }
     // 返回值，已经入队的数量，当入队数量过多时，调用者需放缓以防止内存耗尽
