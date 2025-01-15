@@ -54,7 +54,7 @@ class poll_server
 
 private:
     std::map<int, connection> connections;
-    std::function<int(self &)> OnLoop;
+    std::function<int(self &, int)> OnLoop;
     std::function<void(self &, int)> OnOpen;
     std::function<void(self &, int, const char *, int)> OnData;
     int startup(int port, int backlog = 128, const char *host = "")
@@ -65,7 +65,7 @@ private:
             throw Exception(strerror(errno));
         }
 
-        if (set_nonblocking(httpd) != 0)
+        if (set_noblocking(httpd) != 0)
         {
             throw Exception(strerror(errno));
         }
@@ -87,7 +87,7 @@ private:
         return httpd;
     }
 
-    inline int set_nonblocking(int sockfd)
+    inline int set_noblocking(int sockfd)
     {
         int flags = fcntl(sockfd, F_GETFL, 0);
         if (flags == -1)
@@ -103,7 +103,7 @@ private:
     }
 
 public:
-    poll_server(std::function<int(self &)> on_loop, std::function<void(self &, int)> on_open, std::function<void(self &, int, const char *, int)> on_data)
+    poll_server(std::function<int(self &, int)> on_loop, std::function<void(self &, int)> on_open, std::function<void(self &, int, const char *, int)> on_data)
         : OnLoop(std::ref(on_loop)),
           OnOpen(std::ref(on_open)),
           OnData(std::ref(on_data))
@@ -130,6 +130,15 @@ public:
         c.info.events |= POLLOUT;
         return c.out.size();
     }
+    // 关闭指定的fd
+    bool closefd(int fd)
+    {
+        if (connections.erase(fd) > 0)
+        {
+            return close(fd) == 0;
+        }
+        return false;
+    }
 
     bool start(int port, const char *host = "")
     {
@@ -148,13 +157,14 @@ public:
         std::vector<pollfd> pollfds; // 重新组织 pollfd 数组时使用的缓存，我们存放在上层服复用
         while (true)
         {
-            auto n = OnLoop(*this);
+            auto cs = connections.size();
+            auto n = OnLoop(*this, cs);
             if (n < 1) // OnLoop返回小于1代表意图停止服务
             {
                 break;
             }
             // 重新组织 pollfd 数组, 此处有性能开销因此连接数也不应过大，即backlog变量一般应小于1024
-            pollfds.reserve(connections.size()); // 预分配足够的容量
+            pollfds.reserve(cs); // 预分配足够的容量
             pollfds.clear();
             for (const auto &c : connections)
             {
@@ -194,7 +204,7 @@ public:
                             }
                             throw Exception(strerror(errno));
                         }
-                        if (set_nonblocking(client_sock) != 0)
+                        if (set_noblocking(client_sock) != 0)
                         {
                             throw Exception(strerror(errno));
                         }
@@ -231,8 +241,7 @@ public:
                     if (ret == 0)
                     {
                         // recv返回值0 代表 连接已被对端关闭
-                        close(item.fd);
-                        connections.erase(item.fd);
+                        closefd(item.fd);
                         OnData(*this, item.fd, buf, ret);
                     }
                     else if (ret == -1)
@@ -243,11 +252,18 @@ public:
                             // 没有数据可读，继续等待
                             continue;
                         }
-                        else if (errno == ECONNRESET)
+                        else if (errno == ECONNRESET || errno == EBADF)
                         {
-                            close(item.fd);
-                            connections.erase(item.fd);
-                            OnData(*this, item.fd, buf, -2);
+                            closefd(item.fd);
+                            switch (errno)
+                            {
+                            case ECONNRESET:
+                                OnData(*this, item.fd, buf, -2);
+                                break;
+                            case EBADF:
+                                OnData(*this, item.fd, buf, -3);
+                                break;
+                            }
                         }
                         else
                         {
@@ -296,7 +312,7 @@ public:
                         {
                             // TODO test， 是否还会有收到POLLHUP事件？
                             c.info.events &= ~POLLOUT;
-                            connections.erase(item.fd);
+                            closefd(item.fd);
                         }
                     }
                     else
@@ -308,8 +324,7 @@ public:
                 else if (item.revents & POLLHUP)
                 {
                     // 对方关闭连接,使用-1标记是POLLHUP事件触发了
-                    close(item.fd);
-                    connections.erase(item.fd);
+                    closefd(item.fd);
                     OnData(*this, item.fd, nullptr, -1);
                 }
                 else if (item.revents != 0)
