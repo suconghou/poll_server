@@ -94,12 +94,25 @@ private:
         {
             return -1;
         }
-        flags |= O_NONBLOCK;
-        if (fcntl(sockfd, F_SETFL, flags) == -1)
+        if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1)
         {
             return -2;
         }
         return 0;
+    }
+
+    // 关闭指定的fd, 并执行回调, 如果已经关闭过，则忽略，err>0 时不执行回调
+    bool closefd(int fd, int err = 1)
+    {
+        if (connections.erase(fd) > 0)
+        {
+            if (err < 1)
+            {
+                OnData(*this, fd, nullptr, err);
+            }
+            return close(fd) == 0;
+        }
+        return false;
     }
 
 public:
@@ -112,14 +125,14 @@ public:
     // 返回值，已经入队的数量，当入队数量过多时，调用者需放缓以防止内存耗尽
     // 如果传入的fd不对，将抛出异常
     // 如果要发送的数据0字节，忽略发送请求
-    int write(int fd, const char *data, int len, std::function<void(self &, int, int)> cb)
+    int write(int fd, const char *data, int len, std::function<void(self &, int, int)> cb = nullptr)
     {
         return write(fd, std::string(data, len), cb);
     }
     // 返回值，已经入队的数量，当入队数量过多时，调用者需放缓以防止内存耗尽
     // 如果传入的fd不对，将抛出异常
     // 如果要发送的数据0字节，忽略发送请求
-    int write(int fd, std::string data, std::function<void(self &, int, int)> cb)
+    int write(int fd, std::string data, std::function<void(self &, int, int)> cb = nullptr)
     {
         auto &c = connections.at(fd); // 如果传入的fd不对，此处抛出异常
         if (data.size() <= 0)
@@ -130,14 +143,10 @@ public:
         c.info.events |= POLLOUT;
         return c.out.size();
     }
-    // 关闭指定的fd
+    // 关闭指定的fd, 供外部主动调用, 如果已经关闭过，则忽略，调用后可能会触发关闭回调
     bool closefd(int fd)
     {
-        if (connections.erase(fd) > 0)
-        {
-            return close(fd) == 0;
-        }
-        return false;
+        return closefd(fd, 0);
     }
 
     bool start(int port, const char *host = "")
@@ -164,7 +173,6 @@ public:
                 break;
             }
             // 重新组织 pollfd 数组, 此处有性能开销因此连接数也不应过大，即backlog变量一般应小于1024
-            pollfds.reserve(cs); // 预分配足够的容量
             pollfds.clear();
             for (const auto &c : connections)
             {
@@ -172,7 +180,6 @@ public:
             }
             int num_fds = poll(pollfds.data(), pollfds.size(), n);
             // 返回值，正整数：就绪的文件描述符数量，0: 超时，-1: 错误，第三个参数配置的是超时时间
-            printf("poll got %d ready\n", num_fds);
             if (num_fds < 1)
             {
                 if (num_fds == 0) // 表明超时
@@ -219,6 +226,10 @@ public:
                             OnOpen(*this, -1);
                         }
                     }
+                    else if (item.revents & (POLLERR | POLLNVAL))
+                    {
+                        printf("error: server socket error on fd %d event %d : %s\n", item.fd, item.revents, strerror(errno));
+                    }
                     else if (item.revents != 0)
                     {
                         printf("poll server error,waht event %d ? \n", item.revents);
@@ -241,8 +252,7 @@ public:
                     if (ret == 0)
                     {
                         // recv返回值0 代表 连接已被对端关闭
-                        closefd(item.fd);
-                        OnData(*this, item.fd, buf, ret);
+                        closefd(item.fd, ret);
                     }
                     else if (ret == -1)
                     {
@@ -254,14 +264,14 @@ public:
                         }
                         else if (errno == ECONNRESET || errno == EBADF)
                         {
-                            closefd(item.fd);
+                            perror("error");
                             switch (errno)
                             {
                             case ECONNRESET:
-                                OnData(*this, item.fd, buf, -2);
+                                closefd(item.fd, -2);
                                 break;
                             case EBADF:
-                                OnData(*this, item.fd, buf, -3);
+                                closefd(item.fd, -3);
                                 break;
                             }
                         }
@@ -274,14 +284,22 @@ public:
                 }
                 else if (item.revents & POLLOUT)
                 {
+                    printf("%d can send\n", item.fd);
                     auto &c = connections.at(item.fd); // 此处需要必然存在
                     auto &q = c.out;
                     if (!q.empty())
                     {
                         auto r = q.front();
-                        int bytesSent = send(item.fd, r.data.c_str(), r.data.size(), 0);
+                        int bytesSent = send(item.fd, r.data.c_str() + r.out_bytes, r.data.size() - r.out_bytes, MSG_DONTWAIT);
+                        printf("send ret %d\n", bytesSent);
                         if (bytesSent < 0)
                         {
+                            perror("send ret error");
+                            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                            {
+                                // 发送缓冲区满，稍后重试
+                                continue;
+                            }
                             // 发送失败,回调函数，负数表示失败，可以读取 strerror(errno)
                             if (r.callback)
                             {
@@ -289,12 +307,11 @@ public:
                             }
                             // TODO 是否后续会触发close事件？清理资源
                         }
-                        else if (bytesSent > 0 || bytesSent == r.data.size()) // >=0 (可能r.data.size()==0)
+                        else if (bytesSent > 0)
                         {
                             // 部分数据发送成功，可能需要稍后再试
                             r.out_bytes += bytesSent;
-                            r.data.erase(0, bytesSent);
-                            if (r.data.empty())
+                            if (r.out_bytes == r.data.size())
                             {
                                 q.pop(); // 发送完成，移除请求
                                 if (r.callback)
@@ -304,15 +321,17 @@ public:
                             }
                             else
                             {
-                                // 要发送的数据太大，数据分片了
-                                printf("not empty\n");
+                                printf("数据分片 %d %d\n", r.data.size());
+                                // 数据分片了，虽然send不一定将传给他的数据一次全部发送，但是发送过大的buffer，导致对方接受缓冲区溢出，很可能导致对方发送ECONNRESET中断
+                                // 因此不能传递给send大的buffer size
+                                usleep(1000);
                             }
                         }
                         else // bytesSent == 0 ， 对方已关闭了链接，此时不在执行callback
                         {
                             // TODO test， 是否还会有收到POLLHUP事件？
                             c.info.events &= ~POLLOUT;
-                            closefd(item.fd);
+                            closefd(item.fd, 0);
                         }
                     }
                     else
@@ -324,8 +343,12 @@ public:
                 else if (item.revents & POLLHUP)
                 {
                     // 对方关闭连接,使用-1标记是POLLHUP事件触发了
-                    closefd(item.fd);
-                    OnData(*this, item.fd, nullptr, -1);
+                    closefd(item.fd, -1);
+                }
+                else if (item.revents & (POLLERR | POLLNVAL))
+                {
+                    printf("socket error on fd %d event %d : %s\n", item.fd, item.revents, strerror(errno));
+                    closefd(item.fd, -4);
                 }
                 else if (item.revents != 0)
                 {
