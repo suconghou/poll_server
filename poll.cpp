@@ -249,36 +249,28 @@ public:
                         buf[ret] = '\0';
                         OnData(*this, item.fd, buf, ret);
                     }
+                    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                    {
+                        // 没有数据可读，继续等待
+                        continue;
+                    }
                     if (ret == 0)
                     {
                         // recv返回值0 代表 连接已被对端关闭
                         closefd(item.fd, ret);
                     }
-                    else if (ret == -1)
+                    else
                     {
-                        // 判断错误类型
-                        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                        switch (errno)
                         {
-                            // 没有数据可读，继续等待
-                            continue;
-                        }
-                        else if (errno == ECONNRESET || errno == EBADF)
-                        {
-                            perror("error");
-                            switch (errno)
-                            {
-                            case ECONNRESET:
-                                closefd(item.fd, -2);
-                                break;
-                            case EBADF:
-                                closefd(item.fd, -3);
-                                break;
-                            }
-                        }
-                        else
-                        {
-                            printf("error %s %d \n", strerror(errno), errno);
-                            throw Exception(strerror(errno));
+                        case ECONNRESET:
+                            closefd(item.fd, -2);
+                            break;
+                        case EBADF:
+                            closefd(item.fd, -3);
+                            break;
+                        default:
+                            closefd(item.fd, -4);
                         }
                     }
                 }
@@ -327,7 +319,7 @@ public:
                                 usleep(1000);
                             }
                         }
-                        else // bytesSent == 0 ， 对方已关闭了链接，此时不在执行callback
+                        else // bytesSent == 0 ，对方已关闭了链接，此时不在执行数据已发送的callback
                         {
                             // TODO test， 是否还会有收到POLLHUP事件？
                             c.info.events &= ~POLLOUT;
@@ -348,7 +340,7 @@ public:
                 else if (item.revents & (POLLERR | POLLNVAL))
                 {
                     printf("socket error on fd %d event %d : %s\n", item.fd, item.revents, strerror(errno));
-                    closefd(item.fd, -4);
+                    closefd(item.fd, -5);
                 }
                 else if (item.revents != 0)
                 {

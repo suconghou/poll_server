@@ -51,7 +51,9 @@ API 设计
 
 数据长度为-3，代表recv返回-1，链接被我方主动关闭（EBADF）
 
-数据长度为-4，代表POLLERR或POLLNVAL 事件
+数据长度为-4，代表recv返回-1，其他错误码
+
+数据长度为-5，代表POLLERR或POLLNVAL 事件
 
 ### 数据发送
 
