@@ -102,7 +102,7 @@ private:
     }
 
     // 关闭指定的fd, 并执行回调, 如果已经关闭过，则忽略，err>0 时不执行回调
-    bool closefd(int fd, int err = 1)
+    bool closefd(int fd, int err)
     {
         if (connections.erase(fd) > 0)
         {
@@ -321,7 +321,7 @@ public:
                             }
                             else
                             {
-                                printf("数据分片 %d %d\n", r.data.size());
+                                printf("数据分片 \n");
                                 // 数据分片了，虽然send不一定将传给他的数据一次全部发送，但是发送过大的buffer，导致对方接受缓冲区溢出，很可能导致对方发送ECONNRESET中断
                                 // 因此不能传递给send大的buffer size
                                 usleep(1000);
