@@ -249,11 +249,6 @@ public:
                         buf[ret] = '\0';
                         OnData(*this, item.fd, buf, ret);
                     }
-                    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-                    {
-                        // 没有数据可读，继续等待
-                        continue;
-                    }
                     if (ret == 0)
                     {
                         // recv返回值0 代表 连接已被对端关闭
@@ -261,6 +256,12 @@ public:
                     }
                     else
                     {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                        {
+                            // 没有数据可读，继续等待
+                            printf("EAGAIN %d %d \n", item.fd, ret);
+                            continue;
+                        }
                         switch (errno)
                         {
                         case ECONNRESET:
