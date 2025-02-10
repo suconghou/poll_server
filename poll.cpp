@@ -243,7 +243,7 @@ public:
                 if (item.revents & POLLIN)
                 {
                     int ret;
-                    while ((ret = recv(item.fd, buf, sizeof(buf), 0)) > 0)
+                    while ((ret = recv(item.fd, buf, sizeof(buf) - 1, 0)) > 0)
                     {
                         // 成功读取到数据，注意 recv 不会自动添加0结尾，此处我们附加
                         buf[ret] = '\0';
@@ -294,6 +294,7 @@ public:
                                 continue;
                             }
                             // 发送失败,回调函数，负数表示失败，可以读取 strerror(errno)
+                            q.pop(); // 清理发送任务
                             if (r.callback)
                             {
                                 r.callback(*this, item.fd, bytesSent);
