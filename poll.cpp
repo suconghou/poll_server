@@ -124,14 +124,14 @@ public:
     }
     // 返回值，已经入队的数量，当入队数量过多时，调用者需放缓以防止内存耗尽
     // 如果传入的fd不对，将抛出异常
-    // 如果要发送的数据0字节，忽略发送请求
+    // 如果要发送的数据0字节，忽略发送请求，并且也没有回调函数
     int write(int fd, const char *data, int len, std::function<void(self &, int, int)> cb = nullptr)
     {
         return write(fd, std::string(data, len), cb);
     }
     // 返回值，已经入队的数量，当入队数量过多时，调用者需放缓以防止内存耗尽
     // 如果传入的fd不对，将抛出异常
-    // 如果要发送的数据0字节，忽略发送请求
+    // 如果要发送的数据0字节，忽略发送请求，并且也没有回调函数
     int write(int fd, std::string data, std::function<void(self &, int, int)> cb = nullptr)
     {
         auto &c = connections.at(fd); // 如果传入的fd不对，此处抛出异常
@@ -215,7 +215,7 @@ public:
                         {
                             throw Exception(strerror(errno));
                         }
-                        if (pollfds.size() < backlog)
+                        if ((int)pollfds.size() < backlog)
                         {
                             connections[client_sock] = {.info = {client_sock, POLLIN, 0}}; // POLLHUP无需设置，总是会自动报告POLLHUP事件，如果设置了POLLOUT，发送缓冲区一直有空间，会重复报告
                             OnOpen(*this, client_sock);
@@ -305,7 +305,7 @@ public:
                         {
                             // 部分数据发送成功，可能需要稍后再试
                             r.out_bytes += bytesSent;
-                            if (r.out_bytes == r.data.size())
+                            if (r.out_bytes == (int)r.data.size())
                             {
                                 q.pop(); // 发送完成，移除请求
                                 if (r.callback)
