@@ -70,6 +70,11 @@ private:
             throw Exception(strerror(errno));
         }
 
+        if (set_reuse_port(httpd) != 0)
+        {
+            throw Exception(strerror(errno));
+        }
+
         struct sockaddr_in serv_addr;
         serv_addr.sin_family = AF_INET;
         serv_addr.sin_port = htons(port);
@@ -95,6 +100,20 @@ private:
             return -1;
         }
         if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1)
+        {
+            return -2;
+        }
+        return 0;
+    }
+
+    inline int set_reuse_port(int sockfd)
+    {
+        int opt = 1;
+        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0)
+        {
+            return -1;
+        }
+        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
         {
             return -2;
         }
@@ -277,7 +296,6 @@ public:
                 }
                 else if (item.revents & POLLOUT)
                 {
-                    printf("%d can send\n", item.fd);
                     auto &c = connections.at(item.fd); // 此处需要必然存在
                     auto &q = c.out;
                     if (!q.empty())
