@@ -1,28 +1,29 @@
-#include <ctype.h>
-#include <netinet/in.h>
+#pragma once
 #include <arpa/inet.h>
+#include <array>
+#include <cstring>
+#include <ctype.h>
+#include <fcntl.h>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <map>
+#include <netinet/in.h>
+#include <poll.h>
+#include <queue>
+#include <regex>
+#include <set>
+#include <sstream>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <string>
-#include <cstring>
-#include <fstream>
-#include <sstream>
-#include <iostream>
-#include <set>
-#include <array>
-#include <map>
 #include <vector>
-#include <regex>
-#include <queue>
-#include <functional>
-#include <poll.h>
-#include <fcntl.h>
 
 class Exception : public std::exception
 {
@@ -50,6 +51,7 @@ class poll_server
     {
         pollfd info;
         std::queue<WriteRequest> out;
+        bool write_closed = false; // 标记对端是否关闭写端
     };
 
 private:
@@ -125,7 +127,7 @@ private:
     {
         if (connections.erase(fd) > 0)
         {
-            if (err < 1)
+            if (err <= 0)
             {
                 OnData(*this, fd, nullptr, err);
             }
@@ -170,6 +172,8 @@ public:
 
     bool start(int port, const char *host = "")
     {
+        // 忽略 SIGPIPE 信号（避免因写入关闭的 socket 触发进程终止）
+        signal(SIGPIPE, SIG_IGN);
         int backlog = 128;
         int server_sock = startup(port, backlog, host);
         if (server_sock < 1)
@@ -270,8 +274,15 @@ public:
                     }
                     if (ret == 0)
                     {
-                        // recv返回值0 代表 连接已被对端关闭
-                        closefd(item.fd, ret);
+                        // 客户端关闭写端（半关闭状态）
+                        auto &c = connections.at(item.fd); // 此处需要必然存在
+                        c.write_closed = true;
+                        c.info.events &= ~POLLIN;
+                        if (c.out.empty())
+                        {
+                            closefd(item.fd, -10); // 队列为空，直接关闭
+                        }
+                        printf("write_closed %d %d \n", item.fd, ret);
                     }
                     else
                     {
@@ -281,17 +292,7 @@ public:
                             printf("EAGAIN %d %d \n", item.fd, ret);
                             continue;
                         }
-                        switch (errno)
-                        {
-                        case ECONNRESET:
-                            closefd(item.fd, -2);
-                            break;
-                        case EBADF:
-                            closefd(item.fd, -3);
-                            break;
-                        default:
-                            closefd(item.fd, -4);
-                        }
+                        closefd(item.fd, -4);
                     }
                 }
                 else if (item.revents & POLLOUT)
@@ -300,24 +301,19 @@ public:
                     auto &q = c.out;
                     if (!q.empty())
                     {
-                        auto r = q.front();
-                        int bytesSent = send(item.fd, r.data.c_str() + r.out_bytes, r.data.size() - r.out_bytes, MSG_DONTWAIT);
-                        printf("send ret %d\n", bytesSent);
+                        auto &r = q.front();
+                        int bytesSent = send(item.fd, r.data.c_str() + r.out_bytes, r.data.size() - r.out_bytes, MSG_DONTWAIT | MSG_NOSIGNAL);
                         if (bytesSent < 0)
                         {
                             perror("send ret error");
                             if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
                             {
-                                // 发送缓冲区满，稍后重试
-                                continue;
+                                continue; // 发送缓冲区满，稍后重试
                             }
-                            // 发送失败,回调函数，负数表示失败，可以读取 strerror(errno)
-                            q.pop(); // 清理发送任务
-                            if (r.callback)
-                            {
-                                r.callback(*this, item.fd, bytesSent);
-                            }
-                            // TODO 是否后续会触发close事件？清理资源
+                            // 处理 EPIPE 或其他错误 可以读取 strerror(errno)
+                            q.pop();
+                            c.info.events &= ~POLLOUT;
+                            closefd(item.fd, -3);
                         }
                         else if (bytesSent > 0)
                         {
@@ -325,31 +321,30 @@ public:
                             r.out_bytes += bytesSent;
                             if (r.out_bytes == (int)r.data.size())
                             {
-                                q.pop(); // 发送完成，移除请求
-                                if (r.callback)
+                                auto callback = std::move(r.callback);    // 保存回调函数
+                                auto sent_bytes = std::move(r.out_bytes); // 保存发送的字节数
+                                q.pop();                                  // 发送完成，移除请求
+                                if (callback)
                                 {
-                                    r.callback(*this, item.fd, r.out_bytes);
+                                    callback(*this, item.fd, sent_bytes);
                                 }
                             }
-                            else
-                            {
-                                printf("数据分片 \n");
-                                // 数据分片了，虽然send不一定将传给他的数据一次全部发送，但是发送过大的buffer，导致对方接受缓冲区溢出，很可能导致对方发送ECONNRESET中断
-                                // 因此不能传递给send大的buffer size
-                                usleep(1000);
-                            }
                         }
-                        else // bytesSent == 0 ，对方已关闭了链接，此时不在执行数据已发送的callback
+                        else // bytesSent == 0（对方关闭连接）
                         {
-                            // TODO test， 是否还会有收到POLLHUP事件？
+                            q.pop();
                             c.info.events &= ~POLLOUT;
-                            closefd(item.fd, 0);
+                            closefd(item.fd, -2);
                         }
                     }
                     else
                     {
                         // 发送队列为空，移除 POLLOUT 事件
                         c.info.events &= ~POLLOUT;
+                        if (c.write_closed)
+                        {
+                            closefd(item.fd, -10);
+                        }
                     }
                 }
                 else if (item.revents & POLLHUP)
