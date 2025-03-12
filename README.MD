@@ -1,20 +1,17 @@
+## poll_server
 
-使用`poll`API实现的单线程异步IO SERVER
+使用`poll`API实现的单线程异步IO SERVER框架
 
 
-案例 
-
-echo server
-
-http server
-
-redis server
-
-http file server
+main.cpp 为一个 redis server 示例
 
 
 ```
 g++ -Wall -std=c++20 -O1 main.cpp
+```
+
+```
+g++ -Wall -std=c++20 -flto=auto -static-libstdc++ -static-libgcc --static -Wl,-Bstatic,--gc-sections -O3 -ffunction-sections -fdata-sections main.cpp -o redisserver
 ```
 
 API 设计
@@ -76,4 +73,22 @@ API 设计
 
 ## 性能测试
 
+
+使用`redis-benchmark -p 6479 set a b`测试
+
+性能与原版redis性能差不多
+
+```
+====== set a b ======
+  100000 requests completed in 3.78 seconds
+  50 parallel clients
+  3 bytes payload
+  keep alive: 1
+
+36.56% <= 1 milliseconds
+99.83% <= 2 milliseconds
+99.99% <= 3 milliseconds
+100.00% <= 3 milliseconds
+26448.03 requests per second
+```
 

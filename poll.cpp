@@ -7,7 +7,6 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
-#include <map>
 #include <netinet/in.h>
 #include <poll.h>
 #include <queue>
@@ -23,6 +22,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <unordered_map>
 #include <vector>
 
 class Exception : public std::exception
@@ -55,7 +55,7 @@ class poll_server
     };
 
 private:
-    std::map<int, connection> connections;
+    std::unordered_map<int, connection> connections;
     std::function<int(self &, int)> OnLoop;
     std::function<void(self &, int)> OnOpen;
     std::function<void(self &, int, const char *, int)> OnData;
@@ -160,7 +160,7 @@ public:
         {
             return c.out.size();
         }
-        c.out.push({data, cb, 0});
+        c.out.push({std::move(data), cb, 0});
         c.info.events |= POLLOUT;
         return c.out.size();
     }
@@ -172,8 +172,6 @@ public:
 
     bool start(int port, const char *host = "")
     {
-        // 忽略 SIGPIPE 信号（避免因写入关闭的 socket 触发进程终止）
-        signal(SIGPIPE, SIG_IGN);
         int backlog = 128;
         int server_sock = startup(port, backlog, host);
         if (server_sock < 1)
@@ -185,7 +183,7 @@ public:
 
         struct sockaddr_in client_name;
         socklen_t client_name_len = sizeof(client_name);
-        char buf[512];               // recv buffer,全局复用; TODO enlarge max = 8192
+        char buf[8192];
         std::vector<pollfd> pollfds; // 重新组织 pollfd 数组时使用的缓存，我们存放在上层服复用
         while (true)
         {
@@ -249,14 +247,6 @@ public:
                             OnOpen(*this, -1);
                         }
                     }
-                    else if (item.revents & (POLLERR | POLLNVAL))
-                    {
-                        printf("error: server socket error on fd %d event %d : %s\n", item.fd, item.revents, strerror(errno));
-                    }
-                    else if (item.revents != 0)
-                    {
-                        printf("poll server error,waht event %d ? \n", item.revents);
-                    }
                     // else 没有事件
 
                     // 服务器监听的socket，上面是处理逻辑，只需要处理POLLIN事件，处理完毕在此直接跳到下个循环
@@ -268,8 +258,6 @@ public:
                     int ret;
                     while ((ret = recv(item.fd, buf, sizeof(buf) - 1, 0)) > 0)
                     {
-                        // 成功读取到数据，注意 recv 不会自动添加0结尾，此处我们附加
-                        buf[ret] = '\0';
                         OnData(*this, item.fd, buf, ret);
                     }
                     if (ret == 0)
@@ -282,14 +270,12 @@ public:
                         {
                             closefd(item.fd, -10); // 队列为空，直接关闭
                         }
-                        printf("write_closed %d %d \n", item.fd, ret);
                     }
                     else
                     {
                         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
                         {
                             // 没有数据可读，继续等待
-                            printf("EAGAIN %d %d \n", item.fd, ret);
                             continue;
                         }
                         closefd(item.fd, -4);
@@ -305,7 +291,6 @@ public:
                         int bytesSent = send(item.fd, r.data.c_str() + r.out_bytes, r.data.size() - r.out_bytes, MSG_DONTWAIT | MSG_NOSIGNAL);
                         if (bytesSent < 0)
                         {
-                            perror("send ret error");
                             if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
                             {
                                 continue; // 发送缓冲区满，稍后重试
@@ -321,9 +306,9 @@ public:
                             r.out_bytes += bytesSent;
                             if (r.out_bytes == (int)r.data.size())
                             {
-                                auto callback = std::move(r.callback);    // 保存回调函数
-                                auto sent_bytes = std::move(r.out_bytes); // 保存发送的字节数
-                                q.pop();                                  // 发送完成，移除请求
+                                auto callback = std::move(r.callback); // 保存回调函数
+                                auto sent_bytes = r.out_bytes;         // 保存发送的字节数
+                                q.pop();                               // 发送完成，移除请求
                                 if (callback)
                                 {
                                     callback(*this, item.fd, sent_bytes);
@@ -354,12 +339,7 @@ public:
                 }
                 else if (item.revents & (POLLERR | POLLNVAL))
                 {
-                    printf("socket error on fd %d event %d : %s\n", item.fd, item.revents, strerror(errno));
                     closefd(item.fd, -5);
-                }
-                else if (item.revents != 0)
-                {
-                    printf("poll error,waht event %d ? \n", item.revents);
                 }
                 // else 没有事件
             }
