@@ -129,6 +129,26 @@ private:
         send_response(server, fd, "+OK\r\n");
     }
 
+    // 处理 SETNX 命令
+    void handle_setnx(poll_server &server, int fd, const std::vector<std::string> &args)
+    {
+        if (args.size() != 3)
+        {
+            send_error(server, fd, "wrong number of arguments for 'SETNX'");
+            return;
+        }
+        auto it = db.find(args[1]);
+        if (it == db.end())
+        {
+            db[args[1]] = args[2];
+            send_response(server, fd, ":1\r\n");
+        }
+        else
+        {
+            send_response(server, fd, ":0\r\n");
+        }
+    }
+
     // 处理 DEL 命令
     void handle_del(poll_server &server, int fd, const std::vector<std::string> &args)
     {
@@ -285,6 +305,7 @@ public:
     {
         command_handlers.emplace("GET", &self::handle_get);
         command_handlers.emplace("SET", &self::handle_set);
+        command_handlers.emplace("SETNX", &self::handle_setnx);
         command_handlers.emplace("DEL", &self::handle_del);
         command_handlers.emplace("INCR", &self::handle_incr);
         command_handlers.emplace("INCRBY", &self::handle_incr);

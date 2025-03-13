@@ -92,3 +92,7 @@ API 设计
 26448.03 requests per second
 ```
 
+## 其他
+
+基于本项目封装的http server库 https://github.com/suconghou/httplib
+
