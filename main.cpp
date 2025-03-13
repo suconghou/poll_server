@@ -17,7 +17,7 @@ private:
     std::unordered_map<int, std::string> clients;
 
     // 解析 RESP 协议中的单个命令
-    std::optional<std::vector<std::string>> parse_command(const std::string &buffer, size_t &parsed_len)
+    std::optional<std::vector<std::string>> parse_command(const std::string &buffer, size_t &parsed_len) const
     {
         parsed_len = 0;
         if (buffer.empty() || buffer[0] != '*')
@@ -240,7 +240,7 @@ private:
     }
 
     // 生成 INFO 响应内容
-    std::string generate_info_response()
+    std::string generate_info_response() const
     {
         std::ostringstream oss;
         oss << "keys:" << db.size() << "\r\n";
@@ -249,7 +249,7 @@ private:
     }
 
     // 解析 INCRBY 增量值
-    std::optional<int64_t> parse_increment(const std::vector<std::string> &args)
+    std::optional<int64_t> parse_increment(const std::vector<std::string> &args) const
     {
         if (args.size() != 3)
         {
@@ -265,7 +265,7 @@ private:
         }
     }
     // 验证键值是否为整数
-    std::optional<int64_t> get_and_validate_int(const std::string &key)
+    std::optional<int64_t> get_and_validate_int(const std::string &key) const
     {
         auto it = db.find(key);
         if (it == db.end())

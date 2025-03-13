@@ -94,7 +94,7 @@ private:
         return httpd;
     }
 
-    inline int set_noblocking(int sockfd)
+    inline int set_noblocking(int sockfd) const
     {
         int flags = fcntl(sockfd, F_GETFL, 0);
         if (flags == -1)
@@ -108,7 +108,7 @@ private:
         return 0;
     }
 
-    inline int set_reuse_port(int sockfd)
+    inline int set_reuse_port(int sockfd) const
     {
         int opt = 1;
         if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0)
@@ -160,7 +160,7 @@ public:
         {
             return c.out.size();
         }
-        c.out.push({std::move(data), cb, 0});
+        c.out.emplace(std::move(data), std::move(cb), 0);
         c.info.events |= POLLOUT;
         return c.out.size();
     }
