@@ -200,7 +200,7 @@ public:
                 pollfds.emplace_back(c.second.info);
             }
             int num_fds = poll(pollfds.data(), pollfds.size(), n);
-            // 返回值，正整数：就绪的文件描述符数量，0: 超时，-1: 错误，第三个参数配置的是超时时间
+            // 返回值，正整数：就绪的文件描述符数量，0: 超时，-1: 错误，第三个参数配置的是超时时间(n毫秒)
             if (num_fds < 1)
             {
                 if (num_fds == 0) // 表明超时
