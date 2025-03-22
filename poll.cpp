@@ -183,7 +183,7 @@ public:
 
         struct sockaddr_in client_name;
         socklen_t client_name_len = sizeof(client_name);
-        char buf[8192];
+        char buf[65536];
         std::vector<pollfd> pollfds; // 重新组织 pollfd 数组时使用的缓存，我们存放在上层服复用
         while (true)
         {
