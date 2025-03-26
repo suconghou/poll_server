@@ -43,7 +43,7 @@ class poll_server
     struct WriteRequest
     {
         std::string data;                               // 要写入的数据
-        std::function<void(self &, int, int)> callback; // 回调函数,参数2:fd，参数3:发送的字节数，负数则为失败，是0表示对方已关闭了链接
+        std::function<void(self &, int, int)> callback; // 回调函数,参数2:fd，参数3:发送的字节数
         int out_bytes;                                  // 数据发送计数器，分片发送时，最后一次成功回调需要
     };
 
@@ -137,10 +137,7 @@ private:
     }
 
 public:
-    poll_server(std::function<int(self &, int)> on_loop, std::function<void(self &, int)> on_open, std::function<void(self &, int, const char *, int)> on_data)
-        : OnLoop(on_loop),
-          OnOpen(on_open),
-          OnData(on_data)
+    poll_server(std::function<int(self &, int)> on_loop, std::function<void(self &, int)> on_open, std::function<void(self &, int, const char *, int)> on_data) : OnLoop(std::move(on_loop)), OnOpen(std::move(on_open)), OnData(std::move(on_data))
     {
     }
     // 返回值，已经入队的数量，当入队数量过多时，调用者需放缓以防止内存耗尽
@@ -148,7 +145,7 @@ public:
     // 如果要发送的数据0字节，忽略发送请求，并且也没有回调函数
     int write(int fd, const char *data, int len, std::function<void(self &, int, int)> cb = nullptr)
     {
-        return write(fd, std::string(data, len), cb);
+        return write(fd, std::string(data, len), std::move(cb));
     }
     // 返回值，已经入队的数量，当入队数量过多时，调用者需放缓以防止内存耗尽
     // 如果传入的fd不对，将抛出异常
@@ -156,7 +153,7 @@ public:
     int write(int fd, std::string data, std::function<void(self &, int, int)> cb = nullptr)
     {
         auto &c = connections.at(fd); // 如果传入的fd不对，此处抛出异常
-        if (data.size() <= 0)
+        if (data.empty())
         {
             return c.out.size();
         }
@@ -184,7 +181,7 @@ public:
         struct sockaddr_in client_name;
         socklen_t client_name_len = sizeof(client_name);
         char buf[65536];
-        std::vector<pollfd> pollfds; // 重新组织 pollfd 数组时使用的缓存，我们存放在上层服复用
+        std::vector<pollfd> pollfds;
         while (true)
         {
             auto cs = connections.size();
