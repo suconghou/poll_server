@@ -25,17 +25,6 @@
 #include <unordered_map>
 #include <vector>
 
-class Exception : public std::exception
-{
-public:
-    Exception() : pMessage("") {}
-    Exception(const char *pStr) : pMessage(pStr) {}
-    const char *what() const throw() { return pMessage; }
-
-private:
-    const char *pMessage;
-};
-
 class poll_server
 {
     using self = poll_server;
@@ -64,17 +53,17 @@ private:
         int httpd = socket(AF_INET, SOCK_STREAM, 0);
         if (httpd < 0)
         {
-            throw Exception(strerror(errno));
+            throw std::runtime_error(strerror(errno));
         }
 
         if (set_noblocking(httpd) != 0)
         {
-            throw Exception(strerror(errno));
+            throw std::runtime_error(strerror(errno));
         }
 
         if (set_reuse_port(httpd) != 0)
         {
-            throw Exception(strerror(errno));
+            throw std::runtime_error(strerror(errno));
         }
 
         struct sockaddr_in serv_addr;
@@ -84,12 +73,12 @@ private:
         if (bind(httpd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) != 0)
         {
             close(httpd);
-            throw Exception(strerror(errno));
+            throw std::runtime_error(strerror(errno));
         }
         if (listen(httpd, backlog) < 0)
         {
             close(httpd);
-            throw Exception(strerror(errno));
+            throw std::runtime_error(strerror(errno));
         }
         return httpd;
     }
@@ -209,7 +198,7 @@ public:
                 {
                     continue;
                 }
-                throw Exception(strerror(errno));
+                throw std::runtime_error(strerror(errno));
             }
 
             for (const auto &item : pollfds)
@@ -227,11 +216,11 @@ public:
                             {
                                 continue;
                             }
-                            throw Exception(strerror(errno));
+                            throw std::runtime_error(strerror(errno));
                         }
                         if (set_noblocking(client_sock) != 0)
                         {
-                            throw Exception(strerror(errno));
+                            throw std::runtime_error(strerror(errno));
                         }
                         if ((int)pollfds.size() < backlog)
                         {
