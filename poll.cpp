@@ -137,11 +137,16 @@ public:
         return write(fd, std::string(data, len), std::move(cb));
     }
     // 返回值，已经入队的数量，当入队数量过多时，调用者需放缓以防止内存耗尽
-    // 如果传入的fd不对，将抛出异常
+    // 如果传入的fd不对，返回-1表示错误，而不是抛出异常
     // 如果要发送的数据0字节，忽略发送请求，并且也没有回调函数
     int write(int fd, std::string data, std::function<void(self &, int, int)> cb = nullptr)
     {
-        auto &c = connections.at(fd); // 如果传入的fd不对，此处抛出异常
+        auto it = connections.find(fd);
+        if (it == connections.end())
+        {
+            return -1;
+        }
+        auto &c = it->second;
         if (data.empty())
         {
             return c.out.size();
@@ -253,7 +258,12 @@ public:
                     if (ret == 0)
                     {
                         // 客户端关闭写端（半关闭状态）
-                        auto &c = connections.at(item.fd); // 此处需要必然存在
+                        auto it = connections.find(item.fd);
+                        if (it == connections.end())
+                        {
+                            continue;
+                        }
+                        auto &c = it->second;
                         c.write_closed = true;
                         c.info.events &= ~POLLIN;
                         if (c.out.empty())
@@ -273,7 +283,12 @@ public:
                 }
                 else if (item.revents & POLLOUT)
                 {
-                    auto &c = connections.at(item.fd); // 此处需要必然存在
+                    auto it = connections.find(item.fd);
+                    if (it == connections.end())
+                    {
+                        continue;
+                    }
+                    auto &c = it->second;
                     auto &q = c.out;
                     if (!q.empty())
                     {
