@@ -171,12 +171,14 @@ public:
         socklen_t client_name_len = sizeof(client_name);
         char buf[65536];
         std::vector<pollfd> pollfds;
-        while (true)
+        bool is_running = true;
+        while (is_running)
         {
             auto cs = connections.size();
             auto n = OnLoop(*this, cs);
-            if (n < 1) // OnLoop返回小于1代表意图停止服务
+            if (n < 1 || cs < 1) // OnLoop返回小于1代表意图停止服务
             {
+                is_running = false;
                 break;
             }
             // 重新组织 pollfd 数组, 此处有性能开销因此连接数也不应过大，即backlog变量一般应小于1024
@@ -200,7 +202,6 @@ public:
                 }
                 throw std::runtime_error(strerror(errno));
             }
-
             for (const auto &item : pollfds)
             {
                 // 检查服务器套接字是否有新连接
@@ -233,8 +234,11 @@ public:
                             OnOpen(*this, -1);
                         }
                     }
-                    // else 没有事件
-
+                    else if (item.revents & (POLLERR | POLLNVAL | POLLHUP))
+                    {
+                        is_running = false;
+                        break;
+                    }
                     // 服务器监听的socket，上面是处理逻辑，只需要处理POLLIN事件，处理完毕在此直接跳到下个循环
                     continue;
                 }
@@ -331,6 +335,11 @@ public:
             }
         }
         close(server_sock);
+        for (const auto &pair : connections)
+        {
+            close(pair.first);
+        }
+        connections.clear();
         return true;
     }
 };
